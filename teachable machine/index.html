@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="tl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Classifier</title>
+    
+    <!-- TensorFlow.js at Speech Commands Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands@0.4.0/dist/speech-commands.min.js"></script>
+
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f7f6;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .container {
+            background: #ffffff;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            max-width: 450px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #333;
+            font-size: 24px;
+            margin-bottom: 15px;
+        }
+
+        #status-badge {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: bold;
+            margin-bottom: 20px;
+            background-color: #e0e0e0;
+            color: #666;
+        }
+
+        #status-badge.listening {
+            background-color: #e8f5e9;
+            color: #2e7d32;
+        }
+
+        #status-badge.error {
+            background-color: #ffebee;
+            color: #c62828;
+        }
+
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        .result-box {
+            margin-top: 25px;
+            padding: 20px;
+            background-color: #f0f4f8;
+            border-radius: 8px;
+            border: 2px dashed #4CAF50;
+            min-height: 220px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #detected-text {
+            font-size: 28px;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 10px;
+            text-transform: capitalize;
+        }
+
+        #detected-image {
+            width: 180px;
+            height: 180px;
+            object-fit: cover;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            display: none;
+        }
+
+        #label-container {
+            margin-top: 20px;
+            text-align: left;
+        }
+
+        .label-card {
+            background-color: #eef2f5;
+            margin-bottom: 8px;
+            padding: 8px 12px;
+            border-radius: 6px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 14px;
+            color: #444;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Audio Classifier</h1>
+        <div id="status-badge">🎤 Naka-off ang Mikropono</div>
+        <br>
+
+        <button id="start-btn" type="button" onclick="startClassification()">Start Listening</button>
+
+        <div class="result-box">
+            <div id="detected-text">Pindutin ang Start...</div>
+            <img id="detected-image" src="" alt="Detected Sound Image">
+        </div>
+
+        <div id="label-container"></div>
+    </div>
+
+    <script type="text/javascript">
+        const URL = window.location.origin + "/my_model/";
+
+        // DITO MO ILALAGAY ANG SARILI MONG LARAWAN KADA LABEL
+        // Pwedeng local path (halimbawa: "images/cat.jpg") o URL
+        const imageMap = {
+            "cat": "images/cat.png",
+            "cow": "images/cow.png",
+            "dog": "images/dog.png",
+            "duck": "images/duck.png",
+            "goat": "images/goat.png",
+            "lion": "images/lion.png",
+            "owl": "images/owl.png",
+            "pig": "images/pig.png",
+            "tusk": "images/tuko.png",  // Image path para sa tuko/tusk
+            "tuko": "images/tuko.png",
+            "Background Noise": "images/noise.png"
+        };
+
+        async function startClassification() {
+            const statusBadge = document.getElementById("status-badge");
+            const startBtn = document.getElementById("start-btn");
+            const detectedText = document.getElementById("detected-text");
+
+            startBtn.disabled = true;
+
+            // 1. Request Microphone Access
+            try {
+                statusBadge.innerText = "⏳ Humihingi ng access sa mic...";
+                await navigator.mediaDevices.getUserMedia({ audio: true });
+            } catch (micErr) {
+                alert("Naka-block ang Microphone! Pindutin ang lock icon sa URL bar para i-allow ito.");
+                statusBadge.innerText = "❌ Denied ang Mic Access";
+                statusBadge.className = "error";
+                detectedText.innerText = "I-allow ang Mic!";
+                startBtn.disabled = false;
+                return;
+            }
+
+            // 2. Load Model
+            try {
+                statusBadge.innerText = "⏳ Iniloload ang modelo...";
+                
+                const checkpointURL = URL + "model.json";
+                const metadataURL = URL + "metadata.json";
+
+                const recognizer = speechCommands.create(
+                    "BROWSER_FFT",
+                    undefined,
+                    checkpointURL,
+                    metadataURL
+                );
+
+                await recognizer.ensureModelLoaded();
+                
+                const classLabels = recognizer.wordLabels();
+                const labelContainer = document.getElementById("label-container");
+                const detectedImage = document.getElementById("detected-image");
+                
+                labelContainer.innerHTML = "";
+
+                for (let i = 0; i < classLabels.length; i++) {
+                    const div = document.createElement("div");
+                    div.className = "label-card";
+                    labelContainer.appendChild(div);
+                }
+
+                statusBadge.innerText = "🔴 Nakikinig na...";
+                statusBadge.className = "listening";
+                detectedText.innerText = "Makinig tayo...";
+
+                // 3. Audio Recognition Loop
+                recognizer.listen(result => {
+                    let highestScore = 0;
+                    let highestIndex = 0;
+
+                    for (let i = 0; i < classLabels.length; i++) {
+                        const probability = result.scores[i];
+                        if (probability > highestScore) {
+                            highestScore = probability;
+                            highestIndex = i;
+                        }
+
+                        const rawLabel = classLabels[i];
+                        const displayLabel = (rawLabel === "tusk") ? "tuko" : rawLabel;
+
+                        const classPrediction = `<span>${displayLabel}</span> <strong>${(probability * 100).toFixed(1)}%</strong>`;
+                        labelContainer.childNodes[i].innerHTML = classPrediction;
+                    }
+
+                    const detectedRawLabel = classLabels[highestIndex];
+                    const detectedDisplayLabel = (detectedRawLabel === "tusk") ? "tuko" : detectedRawLabel;
+
+                    // Magpapakita lang kapag lagpas sa 75% confidence
+                    if (highestScore > 0.75) {
+                        detectedText.innerText = detectedDisplayLabel;
+                        
+                        // I-check kung may nakalagay na image sa imageMap
+                        if (imageMap[detectedRawLabel]) {
+                            detectedImage.src = imageMap[detectedRawLabel];
+                            detectedImage.style.display = "block";
+                        } else {
+                            detectedImage.style.display = "none";
+                        }
+                    }
+                }, {
+                    includeSpectrogram: true,
+                    probabilityThreshold: 0.75,
+                    invokeCallbackOnNoiseAndUnknown: true,
+                    overlapFactor: 0.50
+                });
+
+            } catch (modelErr) {
+                console.error("Model Error details:", modelErr);
+                alert("Error sa pag-load ng model: " + modelErr.message);
+                statusBadge.innerText = "❌ Error sa Model Files";
+                statusBadge.className = "error";
+                detectedText.innerText = "Mali ang Model Files!";
+                startBtn.disabled = false;
+            }
+        }
+    </script>
+
+</body>
+</html>
